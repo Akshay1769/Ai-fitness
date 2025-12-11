@@ -9,21 +9,21 @@ import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 import PdfDocument from "./components/PdfDocument";
 
-// Ensures speech synthesis voices are fully loaded on Vercel/iOS/Chrome
-async function loadVoices() {
-  return new Promise<SpeechSynthesisVoice[]>((resolve) => {
+// ----------------------------------------------------
+// 🔊 Load Voices (Fix for Vercel, iOS, Chrome)
+// ----------------------------------------------------
+async function loadVoices(): Promise<SpeechSynthesisVoice[]> {
+  return new Promise((resolve) => {
     const voices = window.speechSynthesis.getVoices();
     if (voices.length > 0) {
       resolve(voices);
       return;
     }
-
     window.speechSynthesis.onvoiceschanged = () => {
       resolve(window.speechSynthesis.getVoices());
     };
   });
 }
-
 
 export default function PlanPage() {
   const [plan, setPlan] = useState<any>(null);
@@ -35,42 +35,86 @@ export default function PlanPage() {
     const saved = localStorage.getItem("ai-fitness-plan");
     if (saved) setPlan(JSON.parse(saved));
 
+    // Trigger voice loading
     window.speechSynthesis.getVoices();
   }, []);
 
-  // -------------------------------------------------
-  // 🔊 SPEECH API
-  // -------------------------------------------------
- async function speakText(text: string) {
-  window.speechSynthesis.cancel();
+  // ----------------------------------------------------
+  // 🔊 Speak (Workout only — single paragraph)
+  // ----------------------------------------------------
+  async function speakText(text: string) {
+    window.speechSynthesis.cancel();
 
-  // 🔥 FIX: Wait for voices to load (this is why Vercel wasn't speaking)
-  const voices = await loadVoices();
+    const voices = await loadVoices();
+    const u = new SpeechSynthesisUtterance(text);
 
-  const u = new SpeechSynthesisUtterance(text);
+    const best =
+      voices.find((v) => v.name.includes("Male")) ||
+      voices.find((v) => v.name.includes("Female")) ||
+      voices[0];
 
-  const best =
-    voices.find((v) => v.name.includes("Male")) ||
-    voices.find((v) => v.name.includes("Female")) ||
-    voices[0];
+    if (best) u.voice = best;
 
-  if (best) u.voice = best;
+    u.rate = 1.02;
+    u.pitch = 1.01;
+    u.onend = () => setSpeaking(false);
 
-  u.rate = 1.02;
-  u.pitch = 1.01;
+    setSpeaking(true);
+    window.speechSynthesis.speak(u);
+  }
 
-  u.onend = () => setSpeaking(false);
+  // ----------------------------------------------------
+  // 🔊 FIXED Diet Speech — Break into chunks
+  // ----------------------------------------------------
+  async function speakDiet(diet: any) {
+    window.speechSynthesis.cancel();
+    setSpeaking(true);
 
-  setSpeaking(true);
-  window.speechSynthesis.speak(u);
-}
+    const voices = await loadVoices();
+    const voice =
+      voices.find((v) => v.name.includes("Male")) ||
+      voices.find((v) => v.name.includes("Female")) ||
+      voices[0];
 
+    for (const day of diet.days) {
+      const chunks: string[] = [];
+
+      chunks.push(`Day ${day.day}. Meals for the day.`);
+
+      for (const meal of day.meals) {
+        chunks.push(`${meal.type}. ${meal.title}. ${meal.description || ""}`);
+        chunks.push(
+          `Calories ${meal.calories}. Protein ${meal.protein}. Carbs ${meal.carbs}. Fats ${meal.fats}.`
+        );
+      }
+
+      // Speak each chunk one by one
+      for (const text of chunks) {
+        const u = new SpeechSynthesisUtterance(text);
+        if (voice) u.voice = voice;
+        u.rate = 1.02;
+        u.pitch = 1.01;
+
+        window.speechSynthesis.speak(u);
+
+        // Wait until chunk finishes before next chunk
+        await new Promise((resolve) => {
+          u.onend = resolve;
+        });
+      }
+    }
+
+    setSpeaking(false);
+  }
 
   function stopSpeaking() {
     window.speechSynthesis.cancel();
     setSpeaking(false);
   }
 
+  // ----------------------------------------------------
+  // Build Workout Speech
+  // ----------------------------------------------------
   function buildWorkoutSpeech(workout: any) {
     let spoken = "";
 
@@ -87,43 +131,29 @@ export default function PlanPage() {
     return spoken;
   }
 
-  function buildDietSpeech(diet: any) {
-    let spoken = "";
-
-    diet.days.forEach((day: any) => {
-      spoken += `Day ${day.day}. Meals: `;
-
-      day.meals.forEach((meal: any) => {
-        spoken += `${meal.type}. ${meal.title}. `;
-        if (meal.description) spoken += `${meal.description}. `;
-        spoken += `Calories ${meal.calories}, Protein ${meal.protein}, Carbs ${meal.carbs}, Fats ${meal.fats}. `;
-      });
-    });
-
-    return spoken;
-  }
-
-  function handleRead() {
+  // ----------------------------------------------------
+  // Handle READ Button
+  // ----------------------------------------------------
+  async function handleRead() {
     if (!plan) return;
 
     if (speaking) return stopSpeaking();
 
-    const text =
-      tab === "workout"
-        ? buildWorkoutSpeech(plan.workout)
-        : buildDietSpeech(plan.diet);
-
-    speakText(text);
+    if (tab === "workout") {
+      const text = buildWorkoutSpeech(plan.workout);
+      speakText(text);
+    } else {
+      speakDiet(plan.diet); // 🔥 IMPORTANT — Diet uses chunked speech
+    }
   }
 
-  // -------------------------------------------------
-  // 📄 MULTI-PAGE PDF EXPORT (NEW VERSION)
-  // -------------------------------------------------
+  // ----------------------------------------------------
+  // PDF EXPORT (unchanged)
+  // ----------------------------------------------------
   async function exportPDF() {
     if (!plan) return;
 
     setShowPdfDom(true);
-
     await new Promise((res) => setTimeout(res, 700));
 
     const element = document.getElementById("pdf-content");
@@ -163,9 +193,9 @@ export default function PlanPage() {
     setShowPdfDom(false);
   }
 
-  // -------------------------------------------------
-  // PAGE UI
-  // -------------------------------------------------
+  // ----------------------------------------------------
+  // UI Rendering
+  // ----------------------------------------------------
   if (!plan) {
     return (
       <main className="min-h-screen flex items-center justify-center text-gray-400">
@@ -256,9 +286,7 @@ export default function PlanPage() {
         </div>
       </main>
 
-      {/* --------------------------------------------
-          HIDDEN PDF DOM
-      --------------------------------------------- */}
+      {/* HIDDEN PDF DOM */}
       {showPdfDom && (
         <div
           style={{
