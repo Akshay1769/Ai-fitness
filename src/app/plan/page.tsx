@@ -9,6 +9,22 @@ import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 import PdfDocument from "./components/PdfDocument";
 
+// Ensures speech synthesis voices are fully loaded on Vercel/iOS/Chrome
+async function loadVoices() {
+  return new Promise<SpeechSynthesisVoice[]>((resolve) => {
+    const voices = window.speechSynthesis.getVoices();
+    if (voices.length > 0) {
+      resolve(voices);
+      return;
+    }
+
+    window.speechSynthesis.onvoiceschanged = () => {
+      resolve(window.speechSynthesis.getVoices());
+    };
+  });
+}
+
+
 export default function PlanPage() {
   const [plan, setPlan] = useState<any>(null);
   const [tab, setTab] = useState<"workout" | "diet">("workout");
@@ -25,26 +41,30 @@ export default function PlanPage() {
   // -------------------------------------------------
   // 🔊 SPEECH API
   // -------------------------------------------------
-  function speakText(text: string) {
-    window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
+ async function speakText(text: string) {
+  window.speechSynthesis.cancel();
 
-    const voices = window.speechSynthesis.getVoices();
-    const best =
-      voices.find((v) => v.name.includes("Male")) ||
-      voices.find((v) => v.name.includes("Female")) ||
-      voices[0];
+  // 🔥 FIX: Wait for voices to load (this is why Vercel wasn't speaking)
+  const voices = await loadVoices();
 
-    if (best) u.voice = best;
+  const u = new SpeechSynthesisUtterance(text);
 
-    u.rate = 1.02;
-    u.pitch = 1.01;
+  const best =
+    voices.find((v) => v.name.includes("Male")) ||
+    voices.find((v) => v.name.includes("Female")) ||
+    voices[0];
 
-    u.onend = () => setSpeaking(false);
+  if (best) u.voice = best;
 
-    setSpeaking(true);
-    window.speechSynthesis.speak(u);
-  }
+  u.rate = 1.02;
+  u.pitch = 1.01;
+
+  u.onend = () => setSpeaking(false);
+
+  setSpeaking(true);
+  window.speechSynthesis.speak(u);
+}
+
 
   function stopSpeaking() {
     window.speechSynthesis.cancel();
